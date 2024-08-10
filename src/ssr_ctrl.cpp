@@ -163,7 +163,7 @@ esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
   static int diviser = 14;
 
   gptimer_config_t timer_config = {
-      .clk_src = GPTIMER_CLK_SRC_XTAL,
+      .clk_src = GPTIMER_CLK_SRC_DEFAULT, //This will probably break, was set to GPTIMER_CLK_SRC_XTAL
       .direction = GPTIMER_COUNT_UP,
       .resolution_hz = uint32_t(cfg.mains_hz) * diviser,
       .flags = {.intr_shared = 1}
@@ -188,7 +188,7 @@ esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
 
   ESP_LOGI(TAG, "Creating new controller for GPIO %d", cfg.gpio);
 
-  ssr_ctrl_t *handle;
+  ssr_ctrl_t *handle = nullptr;
   // Do allocation for handle and go
   ESP_GOTO_ON_FALSE(ret_handle, ESP_ERR_INVALID_ARG, err, TAG, "invalid argument");
   handle = (ssr_ctrl_t *) heap_caps_calloc(1, sizeof(ssr_ctrl_t), MALLOC_CAP_DEFAULT);
