@@ -159,14 +159,19 @@ esp_err_t ssr_ctrl_del(ssr_ctrl_handle_t handle) {
 esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
   esp_err_t ret = ESP_OK;
 
-  // Use to get even number for 50Hz and 60Hz signals from based Clock
+  // Use to get even number for 50Hz and 60Hz signals from base Clock
+#ifdef CONFIG_IDF_TARGET_ESP32
+  static int diviser = 140;
+#else
   static int diviser = 14;
+#endif
 
   gptimer_config_t timer_config = {
       .clk_src = GPTIMER_CLK_SRC_DEFAULT, //This will probably break, was set to GPTIMER_CLK_SRC_XTAL
       .direction = GPTIMER_COUNT_UP,
       .resolution_hz = uint32_t(cfg.mains_hz) * diviser,
-      .flags = {.intr_shared = 1}
+      .intr_priority = 0,
+      .flags = {.intr_shared = 1, .backup_before_sleep = 0}
   };
   gptimer_event_callbacks_t cbs = {
       .on_alarm = _on_ssr_alarm_cb,
