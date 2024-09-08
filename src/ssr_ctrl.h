@@ -47,7 +47,7 @@ esp_err_t ssr_ctrl_get_duty(ssr_ctrl_handle_t handle, int &duty);
 esp_err_t ssr_ctrl_power_off(ssr_ctrl_handle_t handle);
 
 /**
- * Enables the controller.
+ * Enables the controller and internal timer loop.
  * @param handle controller instance
  */
 esp_err_t ssr_ctrl_power_on(ssr_ctrl_handle_t handle);

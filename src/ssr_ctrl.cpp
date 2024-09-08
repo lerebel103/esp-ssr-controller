@@ -36,77 +36,10 @@ struct ssr_ctrl_t {
  * Duty for packets, this only needs to be generated once.
  */
 static duty_packets_t _duty_map[MAX_DUTY - MIN_DUTY + 1];
-
-static IRAM_ATTR bool _on_ssr_alarm_cb(gptimer_handle_t, const gptimer_alarm_event_data_t *, void *user_ctx) {
-  auto inst = (ssr_ctrl_handle_t) (user_ctx);
-
-  if (inst->duty <= 0) {
-    inst->level = 0;
-  } else if (inst->duty >= 100) {
-    inst->level = 1;
-  } else {
-    // The idea is to count how many periods we stay in, then once it reaches the desired count we flip
-    // to the opposite level and start counting again for that expected count
-    int target_count;
-    if (inst->level) {
-      target_count = _duty_map[inst->duty - MIN_DUTY].high_level;
-    } else {
-      target_count = _duty_map[inst->duty - MIN_DUTY].low_level;
-    }
-
-    if (inst->in_state_count >= target_count) {
-      inst->level = !inst->level;
-      inst->in_state_count = 0;
-    }
-  }
-
-  gpio_set_level(inst->cfg.gpio, inst->level);
-  inst->in_state_count++;
-  return true;
-}
-
-/*
- * Turns power off immediately to ssr
- */
-esp_err_t ssr_ctrl_power_off(ssr_ctrl_handle_t inst) {
-  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
-  // Turn off RMT and force pin to zero as safety
-  ESP_ERROR_CHECK(gptimer_stop(inst->timer_handle));
-  ssr_ctrl_set_duty(inst, 0);
-  ESP_ERROR_CHECK(gpio_set_level(inst->cfg.gpio, 0));
-  ESP_LOGI(TAG, "SSR power OFF for gpio %d", inst->cfg.gpio);
-
-  return ESP_OK;
-}
-
-esp_err_t ssr_ctrl_power_on(ssr_ctrl_handle_t inst) {
-  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
-  ESP_LOGI(TAG, "SSR power ON for gpio %d", inst->cfg.gpio);
-  ESP_ERROR_CHECK(gptimer_start(inst->timer_handle));
-
-  return ESP_OK;
-}
-
-esp_err_t ssr_ctrl_set_duty(ssr_ctrl_handle_t inst, int duty) {
-  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
-  if (duty > 100) {
-    duty = 100;
-  } else if (duty < 0) {
-    duty = 0;
-  }
-
-  inst->duty = duty;
-  return ESP_OK;
-}
-
-esp_err_t ssr_ctrl_get_duty(ssr_ctrl_handle_t inst, int &duty) {
-  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
-  duty = inst->duty;
-  return ESP_OK;
-}
+static bool _is_on = false;
 
 /* Generates an indexed array of duty for low and high cycle times */
-void _generate_duty_map() {
+static void _generate_duty_map() {
   static bool duty_generated = false;
 
   if (!duty_generated) {
@@ -138,23 +71,102 @@ void _generate_duty_map() {
   }
 }
 
-static esp_err_t ssr_ctrl_destroy(ssr_ctrl_handle_t handle) {
-  ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
-  if (handle->timer_handle) {
-    gptimer_disable(handle->timer_handle);
-    gptimer_del_timer(handle->timer_handle);
+/**
+ * Alarm callback to control the state of the SSR
+ * @param user_ctx
+ * @return
+ */
+static IRAM_ATTR bool _on_ssr_alarm_cb(gptimer_handle_t, const gptimer_alarm_event_data_t *, void *user_ctx) {
+  auto inst = (ssr_ctrl_handle_t) (user_ctx);
+
+  if (inst->duty <= 0) {
+    inst->level = 0;
+  } else if (inst->duty >= 100) {
+    inst->level = 1;
+  } else {
+    // The idea is to count how many periods we stay in, then once it reaches the desired count we flip
+    // to the opposite level and start counting again for that expected count
+    int target_count;
+    if (inst->level) {
+      target_count = _duty_map[inst->duty - MIN_DUTY].high_level;
+    } else {
+      target_count = _duty_map[inst->duty - MIN_DUTY].low_level;
+    }
+
+    if (inst->in_state_count >= target_count) {
+      inst->level = !inst->level;
+      inst->in_state_count = 0;
+    }
   }
-  free(handle);
+
+  gpio_set_level(inst->cfg.gpio, inst->level);
+  inst->in_state_count++;
+  return true;
+}
+
+esp_err_t ssr_ctrl_power_off(ssr_ctrl_handle_t inst) {
+  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+
+  // Zero duty
+  ssr_ctrl_set_duty(inst, 0);
+
+  if (_is_on) {
+    ESP_LOGI(TAG, "SSR power OFF for gpio %d", inst->cfg.gpio);
+    ESP_ERROR_CHECK(gptimer_stop(inst->timer_handle));
+    ESP_ERROR_CHECK(gptimer_disable(inst->timer_handle));
+    _is_on = false;
+  }
+
+  // Always set pin to low as safety, as the last timer event may have left it high
+  ESP_ERROR_CHECK(gpio_set_level(inst->cfg.gpio, 0));
+  return ESP_OK;
+}
+
+esp_err_t ssr_ctrl_power_on(ssr_ctrl_handle_t inst) {
+  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+
+  if (!_is_on) {
+    ESP_LOGI(TAG, "SSR power ON for gpio %d", inst->cfg.gpio);
+    ESP_ERROR_CHECK(gptimer_enable(inst->timer_handle));
+    ESP_ERROR_CHECK(gptimer_start(inst->timer_handle));
+    _is_on = true;
+  }
+  return ESP_OK;
+}
+
+esp_err_t ssr_ctrl_set_duty(ssr_ctrl_handle_t inst, int duty) {
+  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+
+  if (duty > 100) {
+    duty = 100;
+  } else if (duty < 0) {
+    duty = 0;
+  }
+
+  inst->duty = duty;
+  return ESP_OK;
+}
+
+esp_err_t ssr_ctrl_get_duty(ssr_ctrl_handle_t inst, int &duty) {
+  ESP_RETURN_ON_FALSE(inst, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+  duty = inst->duty;
   return ESP_OK;
 }
 
 esp_err_t ssr_ctrl_del(ssr_ctrl_handle_t handle) {
   ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
-  // recycle memory resource
-  ESP_RETURN_ON_ERROR(ssr_ctrl_destroy(handle), TAG, "destory SSR controller failed");
+
+  if (handle->timer_handle) {
+    if (_is_on) {
+      gptimer_stop(handle->timer_handle);
+      gptimer_disable(handle->timer_handle);
+      _is_on = false;
+    }
+    gptimer_del_timer(handle->timer_handle);
+  }
+  free(handle);
   return ESP_OK;
 }
-
 
 esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
   esp_err_t ret = ESP_OK;
@@ -163,11 +175,12 @@ esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
 #ifdef CONFIG_IDF_TARGET_ESP32
   static int diviser = 140;
 #else
+  // 40 MHz
   static int diviser = 14;
 #endif
 
   gptimer_config_t timer_config = {
-      .clk_src = GPTIMER_CLK_SRC_DEFAULT, //This will probably break, was set to GPTIMER_CLK_SRC_XTAL
+      .clk_src = GPTIMER_CLK_SRC_DEFAULT,
       .direction = GPTIMER_COUNT_UP,
       .resolution_hz = uint32_t(cfg.mains_hz) * diviser,
       .intr_priority = 0,
@@ -209,10 +222,10 @@ esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
   ESP_GOTO_ON_ERROR(gptimer_set_alarm_action(handle->timer_handle, &alarm_config), err, TAG, "Failed to set alarm");
   ESP_GOTO_ON_ERROR(gptimer_register_event_callbacks(handle->timer_handle, &cbs, handle), err, TAG,
                     "Failed to set callback");
-  ESP_GOTO_ON_ERROR(gptimer_enable(handle->timer_handle), err, TAG, "Could not enable timer");
 
-  ssr_ctrl_set_duty(handle, 0);
-  handle->level = 0;
+  // Set initial state as powered off
+  _is_on = false;
+  ESP_ERROR_CHECK(ssr_ctrl_power_off(handle));
 
   // Good to go
   *ret_handle = handle;
@@ -220,7 +233,7 @@ esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
 
   err:
   if (ret_handle) {
-    ssr_ctrl_destroy(handle);
+    ssr_ctrl_del(handle);
   }
   return ret;
 }
