@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.16)
 
 set(COMPONENT_SRCDIRS
         src/
@@ -6,6 +6,8 @@ set(COMPONENT_SRCDIRS
 
 set(COMPONENT_REQUIRES
         driver
+        esp_driver_gpio
+        esp_driver_gptimer
         )
 
 set(COMPONENT_ADD_INCLUDEDIRS

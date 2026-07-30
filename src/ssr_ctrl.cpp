@@ -184,7 +184,7 @@ esp_err_t ssr_ctrl_new(ssr_ctrl_config_t cfg, ssr_ctrl_handle_t *ret_handle) {
       .direction = GPTIMER_COUNT_UP,
       .resolution_hz = uint32_t(cfg.mains_hz) * diviser,
       .intr_priority = 0,
-      .flags = {.intr_shared = 1, .allow_pd = false, .backup_before_sleep = 0,}
+      .flags = {.intr_shared = 1, .allow_pd = false,}
   };
   gptimer_event_callbacks_t cbs = {
       .on_alarm = _on_ssr_alarm_cb,
